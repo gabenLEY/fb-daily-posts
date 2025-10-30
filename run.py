@@ -14,8 +14,10 @@ logging.basicConfig(
     ]
 )
 
+# Create the app instance for Gunicorn
+app = create_app()
+
 if __name__ == '__main__':
-    app = create_app()
     port = int(os.getenv('PORT', 8000))  # Changed default port to match what we've been using
     debug = os.getenv('FLASK_DEBUG', 'True').lower() == 'true'  # Enable debug by default
     
