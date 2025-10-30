@@ -135,7 +135,12 @@ def generate_image_endpoint():
 def publish_to_facebook():
     """Publish post to Facebook"""
     try:
-        data = request.get_json()
+        # Handle both JSON and form data
+        if request.is_json:
+            data = request.get_json()
+        else:
+            data = request.form.to_dict()
+            
         if not data:
             return jsonify({'error': 'No data provided'}), 400
             
