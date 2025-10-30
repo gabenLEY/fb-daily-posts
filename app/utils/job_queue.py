@@ -40,9 +40,15 @@ class DatabaseJobQueue:
             from app.database.models.job import Job
             job = Job.get_job(job_id)
             if job:
+                print(f"📝 Updating job {job_id} to status: {status}")
                 job.update_status(status, result, error)
+                print(f"✅ Job {job_id} updated successfully")
+            else:
+                print(f"❌ Job {job_id} not found in database for update")
         except Exception as e:
             print(f"⚠️ Database job update failed: {e}")
+            import traceback
+            print(f"⚠️ Traceback: {traceback.format_exc()}")
             self._update_memory_job(job_id, status, result, error)
     
     # Fallback in-memory methods
@@ -104,31 +110,64 @@ def process_image_generation_job(job_id: str, prompt: str, size: str = '1024x102
         job_queue.update_job(job_id, 'processing')
         
         # Import here to avoid circular imports
+        logger.info(f"📦 Importing image_gen module for job {job_id}")
         from app.providers.image_gen import generate_image
+        
+        logger.info(f"🖼️ Calling generate_image for job {job_id} with prompt: {prompt[:50]}...")
         
         # Generate the image
         result = generate_image(prompt, size=size, add_watermark=True)
         
-        logger.info(f"✅ Image generation job {job_id} completed")
+        logger.info(f"✅ Image generation job {job_id} completed with result keys: {list(result.keys()) if result else 'None'}")
         job_queue.update_job(job_id, 'completed', result=result)
         
+    except ImportError as e:
+        logger.error(f"❌ Import error in job {job_id}: {e}")
+        job_queue.update_job(job_id, 'failed', error=f"Import error: {str(e)}")
     except Exception as e:
         logger.error(f"❌ Image generation job {job_id} failed: {e}")
+        logger.error(f"❌ Exception type: {type(e).__name__}")
+        import traceback
+        logger.error(f"❌ Traceback: {traceback.format_exc()}")
         job_queue.update_job(job_id, 'failed', error=str(e))
 
 def start_image_generation_job(prompt: str, size: str = '1024x1024') -> str:
     """Start async image generation job"""
+    import logging
+    logger = logging.getLogger(__name__)
+    
     job_id = job_queue.create_job('image_generation', {
         'prompt': prompt,
         'size': size
     })
     
-    # Start background thread
-    thread = threading.Thread(
-        target=process_image_generation_job,
-        args=(job_id, prompt, size)
-    )
+    logger.info(f"🚀 Created job {job_id}, starting background thread...")
+    
+    # Start background thread with better error handling
+    def safe_process_job():
+        try:
+            logger.info(f"🧵 Background thread started for job {job_id}")
+            
+            # Get Flask app context for database operations
+            from flask import current_app
+            with current_app.app_context():
+                process_image_generation_job(job_id, prompt, size)
+        except Exception as e:
+            logger.error(f"💥 Background thread crashed for job {job_id}: {e}")
+            import traceback
+            logger.error(f"💥 Traceback: {traceback.format_exc()}")
+            try:
+                # Try to update job status even if main process failed
+                from flask import current_app
+                with current_app.app_context():
+                    job_queue.update_job(job_id, 'failed', error=f"Thread error: {str(e)}")
+            except Exception as update_error:
+                logger.error(f"💥 Failed to update job status after thread crash: {update_error}")
+    
+    thread = threading.Thread(target=safe_process_job)
     thread.daemon = True
     thread.start()
+    
+    logger.info(f"✅ Background thread started for job {job_id}")
     
     return job_id
