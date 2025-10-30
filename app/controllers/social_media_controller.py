@@ -144,7 +144,12 @@ def publish_to_facebook():
         if not data:
             return jsonify({'error': 'No data provided'}), 400
             
-        current_user_id = request.user_id
+        # Get current user from JWT authentication
+        from flask import g
+        current_user_id = g.current_user.id if g.current_user else None
+        if not current_user_id:
+            return jsonify({'error': 'Authentication required'}), 401
+            
         post_id = data.get('post_id')
         b64_png = data.get('b64_png')
         caption = data.get('caption', '')
@@ -246,7 +251,12 @@ def save_draft():
         if not data:
             return jsonify({'error': 'No data provided'}), 400
             
-        current_user_id = request.user_id
+        # Get current user from JWT authentication
+        from flask import g
+        current_user_id = g.current_user.id if g.current_user else None
+        if not current_user_id:
+            return jsonify({'error': 'Authentication required'}), 401
+            
         content = data.get('content', '').strip()
         image_data = data.get('image_data')  # base64 encoded image
         scheduled_time = data.get('scheduled_time')
@@ -292,7 +302,12 @@ def schedule_post():
         if not data:
             return jsonify({'error': 'No data provided'}), 400
             
-        current_user_id = request.user_id
+        # Get current user from JWT authentication
+        from flask import g
+        current_user_id = g.current_user.id if g.current_user else None
+        if not current_user_id:
+            return jsonify({'error': 'Authentication required'}), 401
+            
         content = data.get('content', '').strip()
         scheduled_time = data.get('scheduled_time')
         image_data = data.get('image_data')
