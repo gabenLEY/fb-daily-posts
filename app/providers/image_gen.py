@@ -27,8 +27,8 @@ def generate_image(prompt, size="1024x1024", add_watermark=True):
         #"response_format": "url"  # or "b64_json" - let's try URL first
     }
 
-    # Use reasonable timeout - OpenAI can take 20-40 seconds
-    timeout = int(os.getenv('IMAGE_GENERATION_TIMEOUT', '35'))  # 35 seconds
+    # Use longer timeout - OpenAI can take up to 2-3 minutes for complex images
+    timeout = int(os.getenv('IMAGE_GENERATION_TIMEOUT', '180'))  # 3 minutes (180 seconds)
     
     try:
         r = requests.post(url, headers=headers, json=body, timeout=timeout)
@@ -45,7 +45,7 @@ def generate_image(prompt, size="1024x1024", add_watermark=True):
         }
         
         try:
-            r = requests.post(url, headers=headers, json=fallback_body, timeout=20)
+            r = requests.post(url, headers=headers, json=fallback_body, timeout=60)
         except:
             # Ultimate fallback - return placeholder
             print("⚠️ All OpenAI attempts failed, using placeholder")
