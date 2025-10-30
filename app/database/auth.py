@@ -27,9 +27,15 @@ def user_identity_lookup(user):
 
 @jwt.user_lookup_loader
 def user_lookup_callback(_jwt_header, jwt_data):
-    """Load user from JWT token"""
-    identity = jwt_data["sub"]
-    return User.get_by_id(int(identity))
+    """Load user from JWT token with database error handling"""
+    try:
+        identity = jwt_data["sub"]
+        return User.get_by_id(int(identity))
+    except Exception as e:
+        # Log database connection errors but don't crash the app
+        import logging
+        logging.error(f"Database error in user lookup: {e}")
+        return None
 
 def create_token(user):
     """Create JWT access token for user"""
