@@ -41,10 +41,20 @@ def init_database(app):
     """Initialize database with Flask app"""
     app.config['SQLALCHEMY_DATABASE_URI'] = get_database_url()
     app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-    app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
+    # Configure SSL for Heroku PostgreSQL
+    engine_options = {
         'pool_pre_ping': True,
         'pool_recycle': 300,
     }
+    
+    # Add SSL configuration for Heroku PostgreSQL
+    database_uri = app.config['SQLALCHEMY_DATABASE_URI']
+    if database_uri and database_uri.startswith('postgresql://'):
+        engine_options['connect_args'] = {
+            'sslmode': 'require'
+        }
+    
+    app.config['SQLALCHEMY_ENGINE_OPTIONS'] = engine_options
     
     db.init_app(app)
     

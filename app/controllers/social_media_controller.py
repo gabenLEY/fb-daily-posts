@@ -3,6 +3,7 @@ from app.database.auth import auth_required, auth_optional
 from app.database.models.post import Post
 from app.database.models.user import User
 from app.database.db import db
+from flask_jwt_extended import get_jwt_identity
 import os
 import base64
 import requests
@@ -144,9 +145,7 @@ def publish_to_facebook():
         if not data:
             return jsonify({'error': 'No data provided'}), 400
             
-        # Get current user from JWT authentication
-        from flask import g
-        current_user_id = g.current_user.id if g.current_user else None
+        current_user_id = get_jwt_identity()
         if not current_user_id:
             return jsonify({'error': 'Authentication required'}), 401
             
@@ -251,9 +250,7 @@ def save_draft():
         if not data:
             return jsonify({'error': 'No data provided'}), 400
             
-        # Get current user from JWT authentication
-        from flask import g
-        current_user_id = g.current_user.id if g.current_user else None
+        current_user_id = get_jwt_identity()
         if not current_user_id:
             return jsonify({'error': 'Authentication required'}), 401
             
@@ -302,9 +299,7 @@ def schedule_post():
         if not data:
             return jsonify({'error': 'No data provided'}), 400
             
-        # Get current user from JWT authentication
-        from flask import g
-        current_user_id = g.current_user.id if g.current_user else None
+        current_user_id = get_jwt_identity()
         if not current_user_id:
             return jsonify({'error': 'Authentication required'}), 401
             
