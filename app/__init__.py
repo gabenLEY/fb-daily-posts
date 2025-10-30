@@ -40,12 +40,14 @@ def create_app():
     from app.routes.social_routes import social_bp
     from app.controllers.facebook_auth_controller import facebook_auth_bp
     from app.controllers.user_auth_controller import user_auth_bp
+    from app.controllers.simple_image_controller import simple_image_bp
     
     app.register_blueprint(auth_bp, url_prefix='/api/auth')
     app.register_blueprint(user_auth_bp, url_prefix='/api/user')
     app.register_blueprint(posts_bp, url_prefix='/api/posts')
     app.register_blueprint(social_bp, url_prefix='/api/social')
     app.register_blueprint(facebook_auth_bp, url_prefix='/api/facebook-auth')
+    app.register_blueprint(simple_image_bp, url_prefix='/api/image')
     
     # Create compatibility routes for old endpoints
     @app.route('/api/prompt', methods=['POST', 'OPTIONS'])

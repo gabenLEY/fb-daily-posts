@@ -86,7 +86,7 @@ def generate_prompt_compat():
 @social_bp.route('/generate-image', methods=['POST'])
 @auth_optional
 def generate_image_endpoint():
-    """Generate AI image (async to avoid Heroku 30s timeout)"""
+    """Generate AI image (chunked timeout approach)"""
     logger.info("🖼️  POST /api/generate-image endpoint called")
     
     try:
@@ -96,43 +96,50 @@ def generate_image_endpoint():
             
         prompt = data.get('prompt', '').strip()
         size = data.get('size', '1024x1024')
+        attempt = int(data.get('attempt', 1))
         
         if not prompt:
             return jsonify({'error': 'Prompt is required'}), 400
         
-        logger.info(f"🎨 Starting async image generation for prompt: '{prompt[:50]}...'")
+        logger.info(f"🎨 Image generation attempt {attempt} for: '{prompt[:50]}...'")
         
-        # Use async approach to avoid Heroku's 30-second timeout
-        from app.utils.job_queue import start_image_generation_job
-        job_id = start_image_generation_job(prompt, size)
+        # Forward to simple image controller
+        from app.controllers.simple_image_controller import try_generate_with_timeout, try_generate_dalle2, generate_placeholder
         
-        logger.info(f"✅ Created image generation job: {job_id}")
-        
-        # Immediately verify the job was created
-        from app.utils.job_queue import job_queue
-        test_job = job_queue.get_job(job_id)
-        if test_job:
-            logger.info(f"✅ Job verified in queue: {job_id} - Status: {test_job.get('status')}")
+        # Try different strategies based on attempt number
+        if attempt == 1:
+            # First attempt: Try with shorter timeout
+            result = try_generate_with_timeout(prompt, size, timeout=25)
+        elif attempt == 2:
+            # Second attempt: Try with DALL-E 2 (faster)
+            result = try_generate_dalle2(prompt, size, timeout=25)
         else:
-            logger.error(f"❌ Job NOT found in queue immediately after creation: {job_id}")
+            # Third attempt: Return placeholder
+            result = generate_placeholder(prompt, size)
         
-        return jsonify({
-            'success': True,
-            'job_id': job_id,
-            'status': 'processing',
-            'message': 'Image generation started. This may take 1-3 minutes.',
-            'polling_url': f'/api/social/job-status/{job_id}',
-            'estimated_time': '60-180 seconds'
-        }), 202  # 202 Accepted (async processing)
+        if result:
+            return jsonify({
+                'success': True,
+                'data': result,
+                'attempt': attempt
+            }), 200
+        else:
+            # Suggest retry with next strategy
+            return jsonify({
+                'success': False,
+                'message': f'Attempt {attempt} timed out, try again for next strategy',
+                'next_attempt': attempt + 1,
+                'retry_suggestion': 'Call same endpoint with "attempt": ' + str(attempt + 1)
+            }), 202
         
     except Exception as e:
         error_msg = str(e)
-        logger.error(f'Failed to start image generation: {error_msg}')
+        logger.error(f'Failed to generate image: {error_msg}')
         
         return jsonify({
-            'error': 'Failed to start image generation',
+            'error': 'Failed to generate image',
             'message': str(e),
-            'suggestion': 'Please try again in a few moments'
+            'suggestion': 'Please try again'
         }), 500
 
 @social_bp.route('/generate-image-async', methods=['POST'])
