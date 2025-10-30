@@ -100,11 +100,19 @@ def generate_image_endpoint():
         if not prompt:
             return jsonify({'error': 'Prompt is required'}), 400
         
-        # For sync compatibility, still generate directly but with timeout warning
-        logger.warning("⚠️ Using sync image generation - may timeout on Heroku")
+        logger.info(f"🎨 Generating image for prompt: '{prompt[:50]}...'")
         
-        # Generate image
+        # Generate image with timeout handling
         result = generate_image(prompt, size=size, add_watermark=True)
+        
+        # Check if we got a fallback/placeholder result
+        if result.get('fallback'):
+            return jsonify({
+                'success': True,
+                'data': result,
+                'warning': 'Image generation timed out, placeholder returned',
+                'suggestion': 'Use /api/social/generate-image-async for better reliability'
+            }), 202  # 202 Accepted instead of 200
         
         return jsonify({
             'success': True,
@@ -112,8 +120,27 @@ def generate_image_endpoint():
         }), 200
         
     except Exception as e:
-        logger.error(f'� Failed to generate image: {str(e)}')
-        return jsonify({'error': 'Failed to generate image'}), 500
+        error_msg = str(e)
+        logger.error(f'Failed to generate image: {error_msg}')
+        
+        # Provide helpful error response based on error type
+        if 'timeout' in error_msg.lower():
+            return jsonify({
+                'error': 'Image generation timed out',
+                'message': 'Try using the async endpoint: /api/social/generate-image-async',
+                'fallback_available': True
+            }), 408  # Request Timeout
+        elif 'openai' in error_msg.lower():
+            return jsonify({
+                'error': 'OpenAI API error',
+                'message': 'The AI service is currently unavailable',
+                'suggestion': 'Please try again in a few moments'
+            }), 503  # Service Unavailable
+        else:
+            return jsonify({
+                'error': 'Failed to generate image',
+                'suggestion': 'Try using the async endpoint: /api/social/generate-image-async'
+            }), 500
 
 @social_bp.route('/generate-image-async', methods=['POST'])
 @auth_optional

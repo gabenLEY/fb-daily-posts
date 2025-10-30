@@ -27,9 +27,33 @@ def generate_image(prompt, size="1024x1024", add_watermark=True):
         #"response_format": "url"  # or "b64_json" - let's try URL first
     }
 
-    # Use shorter timeout for Heroku
-    timeout = int(os.getenv('IMAGE_GENERATION_TIMEOUT', '25'))  # 25 seconds for Heroku
-    r = requests.post(url, headers=headers, json=body, timeout=timeout)
+    # Use reasonable timeout - OpenAI can take 20-40 seconds
+    timeout = int(os.getenv('IMAGE_GENERATION_TIMEOUT', '35'))  # 35 seconds
+    
+    try:
+        r = requests.post(url, headers=headers, json=body, timeout=timeout)
+    except requests.exceptions.Timeout:
+        # If timeout, fall back to a simpler/faster model or return a placeholder
+        print(f"⚠️ OpenAI timeout after {timeout}s, trying fallback...")
+        
+        # Try with a simpler prompt or return a placeholder
+        fallback_body = {
+            "model": "dall-e-2",  # Faster model
+            "prompt": prompt[:100],  # Shorter prompt
+            "size": "1024x1024",
+            "n": 1
+        }
+        
+        try:
+            r = requests.post(url, headers=headers, json=fallback_body, timeout=20)
+        except:
+            # Ultimate fallback - return placeholder
+            print("⚠️ All OpenAI attempts failed, using placeholder")
+            return {
+                'image_url': f'https://via.placeholder.com/{size.replace("x", "x")}/cccccc/666666?text=Image+Generation+Timeout',
+                'b64_image': None,
+                'fallback': True
+            }
 
     if r.status_code != 200:
         print("⚠️ OpenAI error:", r.text)
