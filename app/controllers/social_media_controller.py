@@ -159,16 +159,30 @@ def generate_image_async():
         logger.error(f'💥 Failed to start async job: {str(e)}')
         return jsonify({'error': 'Failed to start image generation'}), 500
 
-@social_bp.route('/job-status/<job_id>', methods=['GET'])
+@social_bp.route('/job-status/<job_id>', methods=['GET', 'OPTIONS'])
 @auth_optional
 def get_job_status(job_id):
     """Get job status and result"""
+    from flask import request, jsonify
+    
+    # Handle CORS preflight
+    if request.method == 'OPTIONS':
+        response = jsonify({'status': 'ok'})
+        response.headers.add('Access-Control-Allow-Origin', '*')
+        response.headers.add('Access-Control-Allow-Headers', 'Content-Type, Authorization')
+        response.headers.add('Access-Control-Allow-Methods', 'GET, OPTIONS')
+        return response
+    
     try:
+        logger.info(f"🔍 Checking job status for ID: {job_id}")
         from app.utils.job_queue import job_queue
         
         job = job_queue.get_job(job_id)
         if not job:
+            logger.warning(f"❌ Job not found: {job_id}")
             return jsonify({'error': 'Job not found'}), 404
+        
+        logger.info(f"✅ Job found: {job_id} - Status: {job.get('status', 'unknown')}")
         
         response_data = {
             'job_id': job['id'],
