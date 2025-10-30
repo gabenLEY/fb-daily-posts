@@ -228,21 +228,43 @@ def publish_to_facebook():
         caption = data.get('caption', '')
         publish_now = bool(data.get('publish_now', True))
         
-        # Get post if post_id provided
+        # Get post from database only if NOT publishing now (i.e., for scheduled posts)
         post = None
-        if post_id:
-            post = Post.query.filter_by(id=post_id, user_id=current_user_id).first()
-            if not post:
-                return jsonify({'error': 'Post not found or permission denied'}), 404
+        if post_id and not publish_now:
+            # Only try to retrieve post from database for scheduled posts
+            try:
+                # Check if post_id is a valid database ID (not a Facebook post ID)
+                post_id_int = int(post_id)
+                if post_id_int > 2147483647:  # PostgreSQL integer max value
+                    # This is likely a Facebook post ID, not our database post ID
+                    logger.warning(f"⚠️ Received Facebook post ID ({post_id}) instead of database post ID - ignoring")
+                    post_id = None
+                    post = None
+                else:
+                    post = Post.query.filter_by(id=post_id_int, user_id=current_user_id).first()
+                    if not post:
+                        return jsonify({'error': 'Post not found or permission denied'}), 404
+            except (ValueError, TypeError):
+                logger.warning(f"⚠️ Invalid post_id format: {post_id} - ignoring")
+                post_id = None
+                post = None
+        elif post_id and publish_now:
+            # If publish_now is true, ignore post_id - this is immediate publishing
+            logger.info("� Immediate publish - ignoring post_id parameter")
+            post_id = None
+            post = None
             
+        # Use post data if we have a valid post record
+        if post:
             # Use post data if not provided in request
             if not caption:
                 caption = post.content
             if not b64_png and hasattr(post, 'image_data'):
                 b64_png = post.image_data
         
-        if not b64_png:
-            return jsonify({'error': 'Image data is required'}), 400
+        # Check if we have either image or caption for Facebook post
+        if not b64_png and not caption:
+            return jsonify({'error': 'Either image data or caption is required'}), 400
         
         if not caption:
             return jsonify({'error': 'Caption is required'}), 400
@@ -267,23 +289,37 @@ def publish_to_facebook():
             }), 400
         
         try:
-            # Decode base64 image
-            image_data = base64.b64decode(b64_png)
-            
-            # Upload photo to Facebook
-            url = f"https://graph.facebook.com/v19.0/{page_id}/photos"
-            
-            files = {
-                'source': ('image.png', image_data, 'image/png')
-            }
-            
-            params = {
-                'access_token': token,
-                'message': caption,
-                'published': 'true' if publish_now else 'false'
-            }
-            
-            response = requests.post(url, files=files, data=params)
+            if b64_png:
+                # Post with image
+                logger.info("📸 Publishing post with image to Facebook")
+                image_data = base64.b64decode(b64_png)
+                
+                # Upload photo to Facebook
+                url = f"https://graph.facebook.com/v19.0/{page_id}/photos"
+                
+                files = {
+                    'source': ('image.png', image_data, 'image/png')
+                }
+                
+                params = {
+                    'access_token': token,
+                    'message': caption,
+                    'published': 'true' if publish_now else 'false'
+                }
+                
+                response = requests.post(url, files=files, data=params)
+            else:
+                # Text-only post
+                logger.info("📝 Publishing text-only post to Facebook")
+                url = f"https://graph.facebook.com/v19.0/{page_id}/feed"
+                
+                params = {
+                    'access_token': token,
+                    'message': caption,
+                    'published': 'true' if publish_now else 'false'
+                }
+                
+                response = requests.post(url, data=params)
             response_data = response.json()
             
             if response.status_code == 200 and 'id' in response_data:
