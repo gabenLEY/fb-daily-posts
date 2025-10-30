@@ -86,7 +86,7 @@ def generate_prompt_compat():
 @social_bp.route('/generate-image', methods=['POST'])
 @auth_optional
 def generate_image_endpoint():
-    """Generate AI image (sync - for compatibility)"""
+    """Generate AI image (async to avoid Heroku 30s timeout)"""
     logger.info("🖼️  POST /api/generate-image endpoint called")
     
     try:
@@ -100,47 +100,30 @@ def generate_image_endpoint():
         if not prompt:
             return jsonify({'error': 'Prompt is required'}), 400
         
-        logger.info(f"🎨 Generating image for prompt: '{prompt[:50]}...'")
+        logger.info(f"🎨 Starting async image generation for prompt: '{prompt[:50]}...'")
         
-        # Generate image with timeout handling
-        result = generate_image(prompt, size=size, add_watermark=True)
-        
-        # Check if we got a fallback/placeholder result
-        if result.get('fallback'):
-            return jsonify({
-                'success': True,
-                'data': result,
-                'warning': 'Image generation timed out, placeholder returned',
-                'suggestion': 'Use /api/social/generate-image-async for better reliability'
-            }), 202  # 202 Accepted instead of 200
+        # Use async approach to avoid Heroku's 30-second timeout
+        from app.utils.job_queue import start_image_generation_job
+        job_id = start_image_generation_job(prompt, size)
         
         return jsonify({
             'success': True,
-            'data': result
-        }), 200
+            'job_id': job_id,
+            'status': 'processing',
+            'message': 'Image generation started. This may take 1-3 minutes.',
+            'polling_url': f'/api/social/job-status/{job_id}',
+            'estimated_time': '60-180 seconds'
+        }), 202  # 202 Accepted (async processing)
         
     except Exception as e:
         error_msg = str(e)
-        logger.error(f'Failed to generate image: {error_msg}')
+        logger.error(f'Failed to start image generation: {error_msg}')
         
-        # Provide helpful error response based on error type
-        if 'timeout' in error_msg.lower():
-            return jsonify({
-                'error': 'Image generation timed out',
-                'message': 'Try using the async endpoint: /api/social/generate-image-async',
-                'fallback_available': True
-            }), 408  # Request Timeout
-        elif 'openai' in error_msg.lower():
-            return jsonify({
-                'error': 'OpenAI API error',
-                'message': 'The AI service is currently unavailable',
-                'suggestion': 'Please try again in a few moments'
-            }), 503  # Service Unavailable
-        else:
-            return jsonify({
-                'error': 'Failed to generate image',
-                'suggestion': 'Try using the async endpoint: /api/social/generate-image-async'
-            }), 500
+        return jsonify({
+            'error': 'Failed to start image generation',
+            'message': str(e),
+            'suggestion': 'Please try again in a few moments'
+        }), 500
 
 @social_bp.route('/generate-image-async', methods=['POST'])
 @auth_optional
