@@ -106,6 +106,16 @@ def generate_image_endpoint():
         from app.utils.job_queue import start_image_generation_job
         job_id = start_image_generation_job(prompt, size)
         
+        logger.info(f"✅ Created image generation job: {job_id}")
+        
+        # Immediately verify the job was created
+        from app.utils.job_queue import job_queue
+        test_job = job_queue.get_job(job_id)
+        if test_job:
+            logger.info(f"✅ Job verified in queue: {job_id} - Status: {test_job.get('status')}")
+        else:
+            logger.error(f"❌ Job NOT found in queue immediately after creation: {job_id}")
+        
         return jsonify({
             'success': True,
             'job_id': job_id,

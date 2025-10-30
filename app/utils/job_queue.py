@@ -8,19 +8,51 @@ import threading
 from datetime import datetime, timedelta
 from typing import Dict, Any, Optional
 
-class SimpleJobQueue:
-    """Simple in-memory job queue for handling async tasks"""
-    
-    def __init__(self):
-        self.jobs: Dict[str, Dict[str, Any]] = {}
-        self.lock = threading.Lock()
+class DatabaseJobQueue:
+    """Database-backed job queue for handling async tasks across multiple processes"""
     
     def create_job(self, job_type: str, data: Dict[str, Any]) -> str:
         """Create a new job and return job ID"""
         job_id = str(uuid.uuid4())
         
-        with self.lock:
-            self.jobs[job_id] = {
+        try:
+            from app.database.models.job import Job
+            Job.create_job(job_id, job_type, data)
+            return job_id
+        except Exception as e:
+            # Fallback to in-memory if database fails
+            print(f"⚠️ Database job creation failed, using in-memory: {e}")
+            return self._create_memory_job(job_id, job_type, data)
+    
+    def get_job(self, job_id: str) -> Optional[Dict[str, Any]]:
+        """Get job status and result"""
+        try:
+            from app.database.models.job import Job
+            job = Job.get_job(job_id)
+            return job.to_dict() if job else None
+        except Exception as e:
+            print(f"⚠️ Database job lookup failed: {e}")
+            return self._get_memory_job(job_id)
+    
+    def update_job(self, job_id: str, status: str, result: Any = None, error: str = None):
+        """Update job status and result"""
+        try:
+            from app.database.models.job import Job
+            job = Job.get_job(job_id)
+            if job:
+                job.update_status(status, result, error)
+        except Exception as e:
+            print(f"⚠️ Database job update failed: {e}")
+            self._update_memory_job(job_id, status, result, error)
+    
+    # Fallback in-memory methods
+    def __init__(self):
+        self._memory_jobs: Dict[str, Dict[str, Any]] = {}
+        self._lock = threading.Lock()
+    
+    def _create_memory_job(self, job_id: str, job_type: str, data: Dict[str, Any]) -> str:
+        with self._lock:
+            self._memory_jobs[job_id] = {
                 'id': job_id,
                 'type': job_type,
                 'status': 'pending',
@@ -30,19 +62,16 @@ class SimpleJobQueue:
                 'created_at': datetime.utcnow(),
                 'updated_at': datetime.utcnow()
             }
-        
         return job_id
     
-    def get_job(self, job_id: str) -> Optional[Dict[str, Any]]:
-        """Get job status and result"""
-        with self.lock:
-            return self.jobs.get(job_id)
+    def _get_memory_job(self, job_id: str) -> Optional[Dict[str, Any]]:
+        with self._lock:
+            return self._memory_jobs.get(job_id)
     
-    def update_job(self, job_id: str, status: str, result: Any = None, error: str = None):
-        """Update job status and result"""
-        with self.lock:
-            if job_id in self.jobs:
-                self.jobs[job_id].update({
+    def _update_memory_job(self, job_id: str, status: str, result: Any = None, error: str = None):
+        with self._lock:
+            if job_id in self._memory_jobs:
+                self._memory_jobs[job_id].update({
                     'status': status,
                     'result': result,
                     'error': error,
@@ -63,7 +92,7 @@ class SimpleJobQueue:
                 del self.jobs[job_id]
 
 # Global job queue instance
-job_queue = SimpleJobQueue()
+job_queue = DatabaseJobQueue()
 
 def process_image_generation_job(job_id: str, prompt: str, size: str = '1024x1024'):
     """Process image generation in background thread"""

@@ -89,6 +89,7 @@ def init_database(app):
     # Import all models to ensure they are registered
     from app.database.models.user import User
     from app.database.models.post import Post
+    from app.database.models.job import Job
     
     with app.app_context():
         db.create_all()
