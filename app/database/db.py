@@ -13,7 +13,15 @@ db = SQLAlchemy()
 
 def get_database_url():
     """Get database URL from environment variables with fallback to SQLite"""
-    # Check if PostgreSQL configuration is available
+    # First, check for Heroku's DATABASE_URL (PostgreSQL)
+    database_url = os.getenv('DATABASE_URL')
+    if database_url:
+        # Heroku uses postgres:// but SQLAlchemy needs postgresql://
+        if database_url.startswith('postgres://'):
+            database_url = database_url.replace('postgres://', 'postgresql://', 1)
+        return database_url
+    
+    # Check if manual PostgreSQL configuration is available
     db_host = os.getenv('DB_HOST')
     db_port = os.getenv('DB_PORT', '5432')
     db_name = os.getenv('DB_NAME')
