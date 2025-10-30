@@ -27,7 +27,9 @@ def generate_image(prompt, size="1024x1024", add_watermark=True):
         #"response_format": "url"  # or "b64_json" - let's try URL first
     }
 
-    r = requests.post(url, headers=headers, json=body, timeout=120)
+    # Use shorter timeout for Heroku
+    timeout = int(os.getenv('IMAGE_GENERATION_TIMEOUT', '25'))  # 25 seconds for Heroku
+    r = requests.post(url, headers=headers, json=body, timeout=timeout)
 
     if r.status_code != 200:
         print("⚠️ OpenAI error:", r.text)

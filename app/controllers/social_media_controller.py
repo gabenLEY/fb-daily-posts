@@ -86,38 +86,25 @@ def generate_prompt_compat():
 @social_bp.route('/generate-image', methods=['POST'])
 @auth_optional
 def generate_image_endpoint():
-    """Generate AI image"""
+    """Generate AI image (sync - for compatibility)"""
     logger.info("🖼️  POST /api/generate-image endpoint called")
     
     try:
-        # Debug: Log request details
-        logger.info(f"📝 Request method: {request.method}")
-        logger.info(f"📝 Request headers: {dict(request.headers)}")
-        logger.info(f"📝 Content-Type: {request.content_type}")
-        
         data = request.get_json()
-        logger.info(f"📝 Raw request data: {data}")
-        
         if not data:
-            logger.warning("❌ No data provided in request")
             return jsonify({'error': 'No data provided'}), 400
             
         prompt = data.get('prompt', '').strip()
         size = data.get('size', '1024x1024')
         
-        logger.info(f"📝 Extracted prompt: '{prompt}'")
-        logger.info(f"📝 Extracted size: '{size}'")
-        
         if not prompt:
-            logger.warning("❌ Prompt is empty or missing")
             return jsonify({'error': 'Prompt is required'}), 400
         
-        logger.info(f"✅ Valid request - generating image for prompt: '{prompt}'")
+        # For sync compatibility, still generate directly but with timeout warning
+        logger.warning("⚠️ Using sync image generation - may timeout on Heroku")
         
         # Generate image
         result = generate_image(prompt, size=size, add_watermark=True)
-        
-        logger.info(f"✅ Image generation successful: {result}")
         
         return jsonify({
             'success': True,
@@ -125,11 +112,71 @@ def generate_image_endpoint():
         }), 200
         
     except Exception as e:
-        logger.error(f'💥 Failed to generate image: {str(e)}')
-        logger.error(f'💥 Exception type: {type(e).__name__}')
-        import traceback
-        logger.error(f'💥 Traceback: {traceback.format_exc()}')
+        logger.error(f'� Failed to generate image: {str(e)}')
         return jsonify({'error': 'Failed to generate image'}), 500
+
+@social_bp.route('/generate-image-async', methods=['POST'])
+@auth_optional
+def generate_image_async():
+    """Start async image generation job"""
+    logger.info("🎨 POST /api/generate-image-async endpoint called")
+    
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({'error': 'No data provided'}), 400
+            
+        prompt = data.get('prompt', '').strip()
+        size = data.get('size', '1024x1024')
+        
+        if not prompt:
+            return jsonify({'error': 'Prompt is required'}), 400
+        
+        # Start async job
+        from app.utils.job_queue import start_image_generation_job
+        job_id = start_image_generation_job(prompt, size)
+        
+        logger.info(f"✅ Started async image generation job: {job_id}")
+        
+        return jsonify({
+            'success': True,
+            'job_id': job_id,
+            'status': 'processing',
+            'message': 'Image generation started. Use /api/social/job-status/{job_id} to check progress.'
+        }), 202
+        
+    except Exception as e:
+        logger.error(f'💥 Failed to start async job: {str(e)}')
+        return jsonify({'error': 'Failed to start image generation'}), 500
+
+@social_bp.route('/job-status/<job_id>', methods=['GET'])
+@auth_optional
+def get_job_status(job_id):
+    """Get job status and result"""
+    try:
+        from app.utils.job_queue import job_queue
+        
+        job = job_queue.get_job(job_id)
+        if not job:
+            return jsonify({'error': 'Job not found'}), 404
+        
+        response_data = {
+            'job_id': job['id'],
+            'status': job['status'],
+            'created_at': job['created_at'].isoformat(),
+            'updated_at': job['updated_at'].isoformat()
+        }
+        
+        if job['status'] == 'completed':
+            response_data['result'] = job['result']
+        elif job['status'] == 'failed':
+            response_data['error'] = job['error']
+        
+        return jsonify(response_data), 200
+        
+    except Exception as e:
+        logger.error(f'💥 Failed to get job status: {str(e)}')
+        return jsonify({'error': 'Failed to get job status'}), 500
 
 @social_bp.route('/publish-facebook', methods=['POST'])
 @auth_required
