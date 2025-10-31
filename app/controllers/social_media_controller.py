@@ -551,21 +551,26 @@ def schedule_post():
                 # Create scheduled post record in database
                 post = Post.create_post(
                     user_id=current_user_id,
-                    content=content,
-                    facebook_page_id=page_id,
+                    caption=content,
                     scheduled_time=scheduled_dt,
+                    facebook_post_id=facebook_data['id'] if facebook_data['id'] else None,
                     image_data=image_to_use if image_to_use else None,
                     status='scheduled'
                 )
                 
                 if post:
                     # Store Facebook post ID and additional metadata
-                    post.platform_post_id = facebook_data['id']
+                    post.facebook_post_id = facebook_data['id']  # Use facebook_post_id field
                     if image_to_use:
                         post.media_urls = ['image_scheduled_with_facebook']
+                    
+                    # Store the Facebook page ID in the title field for reference (or you could add a new field)
+                    if not post.title:
+                        post.title = f"Scheduled for FB Page: {page_id}"
+                    
                     db.session.commit()
                     
-                    logger.info(f"✅ Database record created for scheduled post: {post.id}")
+                    logger.info(f"✅ Database record created for scheduled post: {post.id} on page {page_id}")
                 
                 return jsonify({
                     'success': True,
@@ -606,8 +611,7 @@ def schedule_post():
             try:
                 post = Post.create_post(
                     user_id=current_user_id,
-                    content=content,
-                    facebook_page_id=page_id,
+                    caption=content,
                     scheduled_time=scheduled_dt,
                     image_data=image_to_use if image_to_use else None,
                     status='draft'  # Mark as draft since Facebook scheduling failed

@@ -45,7 +45,7 @@ class Post(db.Model):
         }
     
     @classmethod
-    def create_post(cls, user_id, caption, title=None, image_url=None, image_data=None,
+    def create_post(cls, user_id, facebook_post_id, caption, title=None, image_url=None, image_data=None,
                    scheduled_time=None, status='draft'):
         """Create a new post"""
         try:
@@ -54,6 +54,7 @@ class Post(db.Model):
                 title=title,
                 caption=caption,
                 image_url=image_url,
+                facebook_post_id=facebook_post_id,
                 image_data=image_data,
                 status=status,
                 scheduled_time=scheduled_time
