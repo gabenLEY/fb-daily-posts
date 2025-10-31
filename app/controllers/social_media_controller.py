@@ -721,6 +721,37 @@ def get_scheduled_posts():
                 fb_page_id = post.title.split('FB Page: ')[-1]
                 post_dict['facebook_page_id'] = fb_page_id
             
+            # Add image information
+            post_dict['has_image'] = bool(post.image_data or post.image_url)
+            if post.image_data:
+                # Include base64 image data
+                post_dict['image_data'] = post.image_data
+                # Create a preview URL if it's base64
+                if post.image_data.startswith('data:image/'):
+                    post_dict['image_preview'] = post.image_data
+                else:
+                    post_dict['image_preview'] = f"data:image/png;base64,{post.image_data}"
+            elif post.image_url:
+                # Include image URL
+                post_dict['image_preview'] = post.image_url
+            else:
+                post_dict['image_data'] = None
+                post_dict['image_preview'] = None
+            
+            # Add media information
+            if hasattr(post, 'media_urls') and post.media_urls:
+                post_dict['media_info'] = {
+                    'has_media': True,
+                    'media_type': 'image' if post_dict['has_image'] else 'text',
+                    'media_urls': post.media_urls
+                }
+            else:
+                post_dict['media_info'] = {
+                    'has_media': post_dict['has_image'],
+                    'media_type': 'image' if post_dict['has_image'] else 'text',
+                    'media_urls': []
+                }
+            
             # Add time until scheduled
             if post.scheduled_time:
                 from datetime import timezone
@@ -734,7 +765,8 @@ def get_scheduled_posts():
                     'total_seconds': int(time_until.total_seconds()),
                     'days': time_until.days,
                     'hours': time_until.seconds // 3600,
-                    'minutes': (time_until.seconds % 3600) // 60
+                    'minutes': (time_until.seconds % 3600) // 60,
+                    'human_readable': f"{time_until.days}d {time_until.seconds // 3600}h {(time_until.seconds % 3600) // 60}m"
                 }
                 post_dict['is_past_due'] = time_until.total_seconds() < 0
             
