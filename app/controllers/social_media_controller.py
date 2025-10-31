@@ -641,6 +641,94 @@ def schedule_post():
         logger.error(f'Schedule post failed: {str(e)}')
         return jsonify({'error': 'Failed to schedule post'}), 500
 
+@social_bp.route('/scheduled-posts', methods=['GET', 'OPTIONS'])
+@auth_required
+def get_scheduled_posts():
+    """Get all scheduled posts for the current user, optionally filtered by Facebook page"""
+    # Handle CORS preflight
+    if request.method == 'OPTIONS':
+        response = jsonify({'status': 'ok'})
+        response.headers.add('Access-Control-Allow-Origin', '*')
+        response.headers.add('Access-Control-Allow-Headers', 'Content-Type, Authorization')
+        response.headers.add('Access-Control-Allow-Methods', 'GET, OPTIONS')
+        return response
+    
+    try:
+        current_user_id = get_jwt_identity()
+        if not current_user_id:
+            return jsonify({'error': 'Authentication required'}), 401
+        
+        # Get optional query parameters
+        page_id = request.args.get('page_id')  # Filter by Facebook page ID
+        status = request.args.get('status', 'scheduled')  # Default to scheduled posts
+        limit = int(request.args.get('limit', 50))  # Default limit
+        offset = int(request.args.get('offset', 0))   # Pagination offset
+        
+        # Build query for user's posts
+        query = Post.query.filter_by(user_id=current_user_id, status=status)
+        
+        # Filter by page ID if provided
+        if page_id:
+            # Since we store page ID in title, filter by that
+            query = query.filter(Post.title.like(f'%{page_id}%'))
+        
+        # Apply ordering, limit and offset
+        posts = query.order_by(Post.scheduled_time.asc())\
+                    .limit(limit)\
+                    .offset(offset)\
+                    .all()
+        
+        # Get total count for pagination
+        total_count = query.count()
+        
+        # Convert to dictionaries and add additional info
+        posts_data = []
+        for post in posts:
+            post_dict = post.to_dict()
+            
+            # Extract Facebook page ID from title if present
+            if post.title and 'FB Page:' in post.title:
+                fb_page_id = post.title.split('FB Page: ')[-1]
+                post_dict['facebook_page_id'] = fb_page_id
+            
+            # Add time until scheduled
+            if post.scheduled_time:
+                from datetime import timezone
+                current_time = datetime.now(timezone.utc)
+                if post.scheduled_time.tzinfo is None:
+                    # Make scheduled_time timezone-aware if it isn't
+                    post.scheduled_time = post.scheduled_time.replace(tzinfo=timezone.utc)
+                
+                time_until = post.scheduled_time - current_time
+                post_dict['time_until_scheduled'] = {
+                    'total_seconds': int(time_until.total_seconds()),
+                    'days': time_until.days,
+                    'hours': time_until.seconds // 3600,
+                    'minutes': (time_until.seconds % 3600) // 60
+                }
+                post_dict['is_past_due'] = time_until.total_seconds() < 0
+            
+            posts_data.append(post_dict)
+        
+        return jsonify({
+            'success': True,
+            'posts': posts_data,
+            'pagination': {
+                'total_count': total_count,
+                'limit': limit,
+                'offset': offset,
+                'has_more': offset + len(posts_data) < total_count
+            },
+            'filters': {
+                'page_id': page_id,
+                'status': status
+            }
+        }), 200
+        
+    except Exception as e:
+        logger.error(f'Get scheduled posts failed: {str(e)}')
+        return jsonify({'error': 'Failed to get scheduled posts'}), 500
+
 @social_bp.route('/facebook-config', methods=['GET'])
 @auth_required
 def get_facebook_config():
