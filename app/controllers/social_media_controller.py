@@ -670,22 +670,46 @@ def get_scheduled_posts():
         limit = int(request.args.get('limit', 50))  # Default limit
         offset = int(request.args.get('offset', 0))   # Pagination offset
         
-        # Build query for user's posts
-        query = Post.query.filter_by(user_id=current_user_id, status=status)
-        
-        # Filter by page ID if provided
-        if page_id:
-            # Since we store page ID in title, filter by that
-            query = query.filter(Post.title.like(f'%{page_id}%'))
-        
-        # Apply ordering, limit and offset
-        posts = query.order_by(Post.scheduled_time.asc())\
-                    .limit(limit)\
-                    .offset(offset)\
-                    .all()
-        
-        # Get total count for pagination
-        total_count = query.count()
+        # Retry database operations with connection handling
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                # Build query for user's posts
+                query = Post.query.filter_by(user_id=current_user_id, status=status)
+                
+                # Filter by page ID if provided
+                if page_id:
+                    # Since we store page ID in title, filter by that
+                    query = query.filter(Post.title.like(f'%{page_id}%'))
+                
+                # Apply ordering, limit and offset
+                posts = query.order_by(Post.scheduled_time.asc())\
+                            .limit(limit)\
+                            .offset(offset)\
+                            .all()
+                
+                # Get total count for pagination
+                total_count = query.count()
+                
+                # If we get here, the queries succeeded
+                break
+                
+            except Exception as db_error:
+                logger.warning(f"Database attempt {attempt + 1} failed: {str(db_error)}")
+                
+                if attempt < max_retries - 1:
+                    # Try to recover the connection
+                    try:
+                        db.session.rollback()
+                        db.session.close()
+                    except:
+                        pass
+                    
+                    import time
+                    time.sleep(0.5)  # Brief pause before retry
+                else:
+                    # Final attempt failed
+                    raise db_error
         
         # Convert to dictionaries and add additional info
         posts_data = []
@@ -732,8 +756,27 @@ def get_scheduled_posts():
         }), 200
         
     except Exception as e:
-        logger.error(f'Get scheduled posts failed: {str(e)}')
-        return jsonify({'error': 'Failed to get scheduled posts'}), 500
+        error_str = str(e)
+        logger.error(f'Get scheduled posts failed: {error_str}')
+        
+        # Handle specific database connection errors
+        if 'SSL error' in error_str or 'OperationalError' in error_str:
+            return jsonify({
+                'error': 'Database connection error',
+                'message': 'Temporary connection issue. Please try again.',
+                'retry_suggested': True
+            }), 503  # Service Temporarily Unavailable
+        elif 'psycopg2' in error_str:
+            return jsonify({
+                'error': 'Database error',
+                'message': 'Database temporarily unavailable. Please try again.',
+                'retry_suggested': True
+            }), 503
+        else:
+            return jsonify({
+                'error': 'Failed to get scheduled posts',
+                'message': 'An unexpected error occurred. Please try again.'
+            }), 500
 
 @social_bp.route('/facebook-config', methods=['GET'])
 @auth_required
