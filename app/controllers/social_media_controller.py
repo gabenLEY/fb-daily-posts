@@ -417,7 +417,7 @@ def save_draft():
 @social_bp.route('/schedule-post', methods=['POST'])
 @auth_required
 def schedule_post():
-    """Schedule a post for later publishing"""
+    """Schedule a post for later publishing directly to Facebook"""
     try:
         data = request.get_json()
         if not data:
@@ -429,7 +429,9 @@ def schedule_post():
             
         content = data.get('content', '').strip()
         scheduled_time = data.get('scheduled_time')
-        image_data = data.get('image_data')
+        facebook_page_id = data.get('facebook_page_id')
+        image_data = data.get('image_data')  # base64 encoded image
+        b64_png = data.get('b64_png')  # Alternative image format
         
         if not content:
             return jsonify({'error': 'Content is required'}), 400
@@ -438,35 +440,198 @@ def schedule_post():
             return jsonify({'error': 'Scheduled time is required'}), 400
         
         try:
-            # Parse scheduled time
-            scheduled_dt = datetime.fromisoformat(scheduled_time.replace('Z', '+00:00'))
-            if scheduled_dt <= datetime.utcnow():
-                return jsonify({'error': 'Scheduled time must be in the future'}), 400
-        except ValueError:
-            return jsonify({'error': 'Invalid scheduled time format'}), 400
+            # Parse scheduled time - handle both formats: "2025-10-31T09:23:00Z" and "2025-10-31T09:23:00.000Z"
+            if scheduled_time.endswith('Z'):
+                # Convert Z to +00:00 for ISO format parsing
+                scheduled_time_iso = scheduled_time.replace('Z', '+00:00')
+            else:
+                scheduled_time_iso = scheduled_time
+                
+            scheduled_dt = datetime.fromisoformat(scheduled_time_iso)
+            
+            # Compare with timezone-aware current time
+            from datetime import timezone
+            current_time_utc = datetime.now(timezone.utc)
+            
+            if scheduled_dt <= current_time_utc:
+                return jsonify({
+                    'error': 'Scheduled time must be in the future',
+                    'provided_time': scheduled_dt.isoformat(),
+                    'current_time': current_time_utc.isoformat()
+                }), 400
+                
+            # Convert to Unix timestamp for Facebook API
+            scheduled_timestamp = int(scheduled_dt.timestamp())
+            
+        except ValueError as ve:
+            return jsonify({
+                'error': 'Invalid scheduled time format',
+                'provided_time': scheduled_time,
+                'expected_format': 'ISO 8601 format like "2025-10-31T09:23:00.000Z"',
+                'details': str(ve)
+            }), 400
+
+        # Get user's Facebook credentials
+        from app.database.models.user import User
+        user = User.query.get(current_user_id)
         
-        # Create scheduled post
-        post = Post.create_post(
-            user_id=current_user_id,
-            content=content,
-            platform='facebook',
-            scheduled_time=scheduled_dt,
-            status='scheduled'
-        )
+        # Check if user has selected a Facebook page
+        if user.selected_page_id and user.selected_page_token:
+            page_id = user.selected_page_id
+            token = user.selected_page_token
+        elif facebook_page_id:
+            # Use provided page ID with user's token (if available)
+            page_id = facebook_page_id
+            token = user.selected_page_token if user.selected_page_token else os.getenv("FB_PAGE_ACCESS_TOKEN")
+        else:
+            # Fallback to environment variables
+            page_id = os.getenv("FB_PAGE_ID")
+            token = os.getenv("FB_PAGE_ACCESS_TOKEN")
+
+        if not (page_id and token):
+            return jsonify({
+                'error': 'Facebook page not connected',
+                'message': 'Please connect your Facebook page first'
+            }), 400
+
+        # Use image_data or b64_png (prefer b64_png if both provided)
+        image_to_use = b64_png or image_data
         
-        if not post:
-            return jsonify({'error': 'Failed to schedule post'}), 500
-        
-        # Store image data if provided
-        if image_data:
-            post.media_urls = ['image_data_present']
-            db.session.commit()
-        
-        return jsonify({
-            'success': True,
-            'message': 'Post scheduled successfully',
-            'post': post.to_dict()
-        }), 201
+        try:
+            facebook_response = None
+            
+            if image_to_use:
+                # Schedule post with image to Facebook
+                logger.info(f"📸 Scheduling Facebook post with image for {scheduled_dt}")
+                
+                # Decode base64 image
+                if image_to_use.startswith('data:image/'):
+                    # Remove data URL prefix if present
+                    image_to_use = image_to_use.split(',')[1]
+                
+                image_bytes = base64.b64decode(image_to_use)
+                
+                # Upload photo to Facebook with scheduled publish time
+                url = f"https://graph.facebook.com/v19.0/{page_id}/photos"
+                
+                files = {
+                    'source': ('scheduled_image.png', image_bytes, 'image/png')
+                }
+                
+                params = {
+                    'access_token': token,
+                    'message': content,
+                    'published': 'false',  # Don't publish immediately
+                    'scheduled_publish_time': scheduled_timestamp
+                }
+                
+                facebook_response = requests.post(url, files=files, data=params)
+                
+            else:
+                # Schedule text-only post to Facebook
+                logger.info(f"📝 Scheduling Facebook text post for {scheduled_dt}")
+                
+                url = f"https://graph.facebook.com/v19.0/{page_id}/feed"
+                
+                params = {
+                    'access_token': token,
+                    'message': content,
+                    'published': 'false',  # Don't publish immediately
+                    'scheduled_publish_time': scheduled_timestamp
+                }
+                
+                facebook_response = requests.post(url, data=params)
+                
+            facebook_data = facebook_response.json()
+            
+            if facebook_response.status_code == 200 and 'id' in facebook_data:
+                # Facebook scheduling successful - now save to database
+                logger.info(f"✅ Facebook post scheduled successfully: {facebook_data['id']}")
+                
+                # Create scheduled post record in database
+                post = Post.create_post(
+                    user_id=current_user_id,
+                    content=content,
+                    facebook_page_id=page_id,
+                    scheduled_time=scheduled_dt,
+                    image_data=image_to_use if image_to_use else None,
+                    status='scheduled'
+                )
+                
+                if post:
+                    # Store Facebook post ID and additional metadata
+                    post.platform_post_id = facebook_data['id']
+                    if image_to_use:
+                        post.media_urls = ['image_scheduled_with_facebook']
+                    db.session.commit()
+                    
+                    logger.info(f"✅ Database record created for scheduled post: {post.id}")
+                
+                return jsonify({
+                    'success': True,
+                    'message': f'Post scheduled successfully for {scheduled_dt.strftime("%Y-%m-%d %H:%M:%S UTC")}',
+                    'facebook_post_id': facebook_data['id'],
+                    'scheduled_time': scheduled_dt.isoformat(),
+                    'post': post.to_dict() if post else None,
+                    'facebook_response': {
+                        'post_id': facebook_data['id'],
+                        'scheduled_publish_time': scheduled_timestamp
+                    }
+                }), 201
+                
+            else:
+                # Facebook API error
+                logger.error(f'Facebook scheduling error: {facebook_data}')
+                error_message = facebook_data.get('error', {}).get('message', 'Unknown Facebook API error')
+                
+                return jsonify({
+                    'error': 'Failed to schedule post with Facebook',
+                    'details': error_message,
+                    'facebook_error': facebook_data.get('error', {})
+                }), 400
+                
+        except requests.exceptions.RequestException as e:
+            logger.error(f'Facebook API request failed: {str(e)}')
+            return jsonify({
+                'error': 'Failed to connect to Facebook API',
+                'message': 'Please check your internet connection and Facebook permissions'
+            }), 500
+            
+        except Exception as e:
+            logger.error(f'Facebook scheduling error: {str(e)}')
+            
+            # Fallback: Save to database only if Facebook fails
+            logger.info("💾 Facebook scheduling failed, saving to database only as fallback")
+            
+            try:
+                post = Post.create_post(
+                    user_id=current_user_id,
+                    content=content,
+                    facebook_page_id=page_id,
+                    scheduled_time=scheduled_dt,
+                    image_data=image_to_use if image_to_use else None,
+                    status='draft'  # Mark as draft since Facebook scheduling failed
+                )
+                
+                if post and image_to_use:
+                    post.media_urls = ['image_data_present']
+                    db.session.commit()
+                
+                return jsonify({
+                    'success': False,
+                    'message': 'Facebook scheduling failed, saved as draft instead',
+                    'warning': 'You will need to manually publish this post',
+                    'error_details': str(e),
+                    'post': post.to_dict() if post else None
+                }), 202  # Accepted but not fully processed
+                
+            except Exception as db_error:
+                logger.error(f'Database fallback also failed: {str(db_error)}')
+                return jsonify({
+                    'error': 'Both Facebook scheduling and database save failed',
+                    'facebook_error': str(e),
+                    'database_error': str(db_error)
+                }), 500
         
     except Exception as e:
         logger.error(f'Schedule post failed: {str(e)}')
