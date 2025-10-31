@@ -642,16 +642,22 @@ def schedule_post():
         return jsonify({'error': 'Failed to schedule post'}), 500
 
 @social_bp.route('/scheduled-posts', methods=['GET', 'OPTIONS'])
-@auth_required
 def get_scheduled_posts():
     """Get all scheduled posts for the current user, optionally filtered by Facebook page"""
-    # Handle CORS preflight
+    # Handle CORS preflight BEFORE authentication
     if request.method == 'OPTIONS':
         response = jsonify({'status': 'ok'})
         response.headers.add('Access-Control-Allow-Origin', '*')
         response.headers.add('Access-Control-Allow-Headers', 'Content-Type, Authorization')
         response.headers.add('Access-Control-Allow-Methods', 'GET, OPTIONS')
         return response
+    
+    # Apply authentication only for non-OPTIONS requests
+    from app.database.auth import verify_jwt_in_request
+    try:
+        verify_jwt_in_request()
+    except Exception:
+        return jsonify({'error': 'Authentication required'}), 401
     
     try:
         current_user_id = get_jwt_identity()
